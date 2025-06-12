@@ -1,0 +1,32 @@
+package com.br.ff.controller;
+
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.br.ff.model.Recommendation;
+import com.br.ff.services.AIRecommendationService;
+
+@RestController
+@RequestMapping("/ai/recommendations")
+
+public class AIRecommendationController {
+	@Autowired
+	private AIRecommendationService aiRecommendationService;
+
+    @PostMapping("/{userId}")
+    public ResponseEntity<Recommendation> generateRecommendation(@PathVariable String userId) {
+        return ResponseEntity.ok(aiRecommendationService.generateRecommendation(userId));
+    }
+
+    @GetMapping("/{userId}")
+    public ResponseEntity<List<Recommendation>> getUserRecommendations(@PathVariable String userId) {
+        return ResponseEntity.ok(aiRecommendationService.getUserRecommendations(userId));
+    }
+}

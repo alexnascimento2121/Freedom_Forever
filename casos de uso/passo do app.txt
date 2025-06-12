@@ -1,0 +1,28 @@
+Para criar esse aplicativo, siga essas etapas principais:
+
+### 1. **Definição dos Requisitos**
+   - O usuário responde a uma série de perguntas para avaliar o nível de dependência.
+   - O sistema utiliza IA para sugerir tratamentos personalizados.
+   - O app deve estar disponível na web e no mobile.
+   - Interface acessível e intuitiva.
+
+### 2. **Tecnologias**
+   - **Back-end**: Spring Boot (Java) ou Node.js (Express) com banco de dados (PostgreSQL ou MongoDB).
+   - **Front-end**: React (para web) e React Native (para mobile) ou Flutter.
+   - **IA**: OpenAI API, LangChain ou modelos open-source como Llama 2 para recomendações personalizadas.
+   - **Autenticação**: Keycloak ou Firebase Authentication.
+   - **Hospedagem**: AWS (EC2, S3, RDS), Firebase, ou Vercel.
+
+### 3. **Arquitetura**
+   - **Camada de IA**: Interpreta respostas e sugere tratamentos.
+   - **Banco de dados**: Armazena perfis e históricos de tratamento.
+   - **Camada de API**: Gerencia as interações entre o app e o back-end.
+   - **Interface**: Responsiva e acessível.
+
+### 4. **Passos de Desenvolvimento**
+   1. Criar um MVP com a funcionalidade de perguntas e recomendações básicas.
+   2. Integrar IA para melhorar as sugestões.
+   3. Desenvolver o app web e mobile.
+   4. Implementar segurança e conformidade com LGPD e outras regulamentações.
+
+Você deseja um protótipo inicial ou um código de exemplo para começar?

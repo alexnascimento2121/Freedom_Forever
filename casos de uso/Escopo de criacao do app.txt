@@ -1,0 +1,66 @@
+### **Escopo do Projeto: Aplicativo de Apoio a Dependências e Vícios**  
+
+#### **1. Visão Geral**  
+O objetivo do projeto é criar um aplicativo acessível via web e mobile que ajude pessoas com dependências ou vícios. O sistema usará IA para fornecer sugestões de tratamento personalizadas com base em respostas a um questionário inicial.  
+
+---
+
+### **2. Tecnologias**  
+- **Backend:** Spring Boot (Java)  
+- **Banco de Dados:** PostgreSQL ou MongoDB  
+- **Frontend:** React (Web) e React Native (Mobile)  
+- **Segurança:** Spring Security + JWT para autenticação  
+- **Integração com IA:** OpenAI API ou TensorFlow para sugestões inteligentes  
+- **Mensageria:** RabbitMQ ou Kafka (caso necessário)  
+
+---
+
+### **3. Módulos do Backend (Spring Boot)**  
+
+#### **3.1. Autenticação e Controle de Usuário**  
+- Cadastro e login (com JWT)  
+- Recuperação de senha  
+- Perfis: Paciente e Administrador  
+
+#### **3.2. Questionário Inicial**  
+- Perguntas para avaliar o nível de dependência  
+- Armazenamento das respostas no banco  
+- Envio de respostas para o motor de IA  
+
+#### **3.3. Motor de IA para Recomendações**  
+- Processamento das respostas  
+- Retorno de sugestões personalizadas  
+- Registro das recomendações  
+
+#### **3.4. Acompanhamento do Usuário**  
+- Histórico de tratamentos recomendados  
+- Feedback do usuário sobre os tratamentos  
+
+#### **3.5. Notificações e Alertas**  
+- Envio de lembretes e sugestões via e-mail e SMS  
+- Integração com Twilio ou Firebase  
+
+#### **3.6. Painel Administrativo**  
+- Gestão de usuários e permissões  
+- Revisão de respostas e sugestões da IA  
+- Monitoramento de estatísticas  
+
+---
+
+### **4. Integrações**  
+- **API de IA:** OpenAI ou TensorFlow  
+- **Mensageria:** RabbitMQ (para processamento assíncrono)  
+- **Banco de Dados:** PostgreSQL ou MongoDB  
+
+---
+
+### **5. Próximos Passos**  
+1. Criar a estrutura inicial do backend com Spring Boot  
+2. Implementar autenticação JWT  
+3. Criar endpoints REST para o questionário e sugestões  
+4. Integrar IA para análise de respostas  
+5. Desenvolver o frontend em React e React Native  
+
+---
+
+Este escopo cobre a base inicial do projeto. Precisa de ajustes ou alguma funcionalidade extra? 🚀

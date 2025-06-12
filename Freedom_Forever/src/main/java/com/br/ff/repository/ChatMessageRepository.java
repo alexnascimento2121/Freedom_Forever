@@ -1,0 +1,22 @@
+package com.br.ff.repository;
+
+import java.util.List;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.mongodb.repository.MongoRepository;
+
+import com.br.ff.model.ChatMessage;
+import com.br.ff.model.Users;
+
+public interface ChatMessageRepository extends MongoRepository<ChatMessage, String> {
+    
+    List<ChatMessage> findByUserOrderByTimestampAsc(Users user);
+
+    Page<ChatMessage> findByUserOrderByTimestampDesc(Users user, Pageable pageable);
+    
+    Page<ChatMessage> findByUserAndId(Users user, String addictionId, Pageable pageable);
+
+	Page<ChatMessage> findByUser(Users user, Pageable pageable);
+
+}

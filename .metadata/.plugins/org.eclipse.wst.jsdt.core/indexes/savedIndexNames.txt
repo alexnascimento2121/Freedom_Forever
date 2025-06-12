@@ -1,0 +1,7 @@
+INDEX VERSION 1.4+C:\Users\alexn\Documents\workspace-spring-tool-suite-4-4.17.0.RELEASE\Projeto_Freedom_forever\.metadata\.plugins\org.eclipse.wst.jsdt.core\indexes
+2236093783.index
+1485769998.index
+822847449.index
+2450659847.index
+580153464.index
+1140879762.index

@@ -1,0 +1,214 @@
+package com.br.ff.controller;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.br.ff.controller.Request.AnswerRequest;
+import com.br.ff.controller.Request.ChatRequest;
+import com.br.ff.controller.Response.ChatMessageResponse;
+import com.br.ff.model.Answer;
+import com.br.ff.services.AILLamaRecommendationService;
+import com.br.ff.services.AnswerService;
+
+@RestController
+@RequestMapping("/answers")
+@CrossOrigin(origins = "*", allowedHeaders = "*")
+public class AnswerController {
+	private static final Logger logger = LoggerFactory.getLogger(AnswerController.class);
+	
+    @Autowired
+    private AnswerService answerService;
+    
+    @Autowired
+    private AILLamaRecommendationService llamaService;
+    
+    private final ExecutorService executorService = Executors.newCachedThreadPool();
+
+    @GetMapping("/question/{questionId}")
+    public ResponseEntity<List<Answer>> getAnswersByQuestion(@PathVariable String questionId) {
+        List<Answer> answers = answerService.getAnswersByQuestion(questionId);
+        return ResponseEntity.ok(answers);
+    }
+
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<List<Answer>> getAnswersByUser(@PathVariable String userId) {
+        List<Answer> answers = answerService.getAnswersByUser(userId);
+        return ResponseEntity.ok(answers);
+    }
+
+    @PostMapping("/create")
+    public ResponseEntity<Answer> createAnswer(@RequestBody AnswerRequest request) {
+        Answer createdAnswer = answerService.createAnswer(
+            request.getQuestionId(),
+            request.getUserId(),
+            request.getAnswerText()
+        );
+        return ResponseEntity.ok(createdAnswer);
+    }
+    
+    @GetMapping("/user/{userId}/has-answered")
+    public ResponseEntity<Boolean> hasUserAnswered(@PathVariable String userId) {
+        boolean answered = answerService.hasUserAnswered(userId);
+        return ResponseEntity.ok(answered);
+    }
+    
+    @PostMapping("/converse")
+    public Map<String, String> converse(@RequestBody ChatRequest request) {
+        String responseText = llamaService.chatWithAI(request.getUserId(), request.getUserText());
+
+        Map<String, String> response = new HashMap<>();
+        response.put("responseText", responseText);
+        return response;
+    }
+    
+    @PostMapping("/initial-answer")
+    public ResponseEntity<Map<String, String>> submitInitialAnswer(@RequestBody AnswerRequest request) {
+        // Salva a resposta e gera resposta da IA com base nela
+        String aiResponse = llamaService.handleInitialAnswerAndStartChat(request);
+        Map<String, String> response = new HashMap<>();
+        response.put("responseText", aiResponse);
+        return ResponseEntity.ok(response);
+    }
+    
+    //demora
+    @PostMapping("/chat")
+    public ResponseEntity<Map<String, String>> continueChat(@RequestBody ChatRequest request) {
+        String aiResponse = llamaService.chatWithAI(request.getUserId(), request.getUserText());
+        Map<String, String> response = new HashMap<>();
+        response.put("responseText", aiResponse);
+        return ResponseEntity.ok(response);
+    }
+    
+//    @GetMapping("/chat/history/username/{username}")
+//    public ResponseEntity<List<ChatMessageResponse>> getChatHistoryByUsername(
+//            @PathVariable String username,
+//            @RequestParam(defaultValue = "0") int page,
+//            @RequestParam(defaultValue = "10") int size) {
+//        try {
+//            List<ChatMessageResponse> history = llamaService.getChatHistoryByUsername(username, page, size);
+//            return ResponseEntity.ok(history);
+//        } catch (Exception e) {
+//        	e.printStackTrace(); // ou use logger.error
+//        	return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.emptyList());
+//        }
+//    }
+    
+    @GetMapping("/chat/history/username/{username}")
+    public ResponseEntity<List<ChatMessageResponse>> getChatHistoryByUsername(
+            @PathVariable String username,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String addictionId) {
+
+        try {
+            List<ChatMessageResponse> history = llamaService.getChatHistoryByUsername(username, page, size, addictionId);
+            return ResponseEntity.ok(history);
+        } catch (Exception e) {
+            e.printStackTrace(); // ou use logger.error
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.emptyList());
+        }
+    }
+
+
+    @GetMapping(value="/chat/stream/{userId}/{message}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamChat(@PathVariable String userId, @PathVariable String message) {
+        // Configuração do SSE com timeout longo (30 minutos)
+        SseEmitter emitter = new SseEmitter(1800000L);
+        
+        // Verificar autenticação
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            logger.error("Usuário não autenticado tentando acessar streaming");
+            emitter.completeWithError(new SecurityException("Não autenticado"));
+            return emitter;
+        }
+        
+        logger.info("Iniciando streaming para usuário: {}, auth: {}", userId, auth.getName());
+        
+        // Registrar callbacks para gerenciar o ciclo de vida do emitter
+        emitter.onCompletion(() -> logger.info("SSE completado para usuário: {}", userId));
+        emitter.onTimeout(() -> logger.info("SSE timeout para usuário: {}", userId));
+        emitter.onError((ex) -> logger.error("SSE erro para usuário: {}: {}", userId, ex.getMessage()));
+        
+        // Executar em thread separada para não bloquear
+        executorService.execute(() -> {
+            try {
+                // Decodifica a mensagem da URL
+                String decodedMessage = java.net.URLDecoder.decode(message, java.nio.charset.StandardCharsets.UTF_8);
+                
+                // Obter chunks já formatados
+                List<String> chunks = llamaService.streamResponse(userId, decodedMessage);
+                
+                // Enviar cada chunk como um evento SSE
+                for (String chunk : chunks) {
+                    try {
+                        emitter.send(SseEmitter.event().data(chunk));
+                        Thread.sleep(100); // Simula latência
+                    } catch (IOException e) {
+                        logger.warn("Erro ao enviar chunk para usuário {}: {}", userId, e.getMessage());
+                        emitter.completeWithError(e);
+                        return;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.warn("Thread interrompida durante streaming para usuário {}", userId);
+                        break;
+                    }
+                }
+                
+                // Completar o emitter após enviar todos os chunks
+                emitter.complete();
+                
+            } catch (Exception e) {
+                logger.error("Erro durante streaming para usuário {}: {}", userId, e.getMessage());
+                emitter.completeWithError(e);
+            }
+        });
+        
+        return emitter;
+    }
+    
+    // Endpoint alternativo que retorna a resposta completa sem streaming
+    // Útil para testes ou como fallback
+    @CrossOrigin(origins = "*")
+    @GetMapping(value="/chat/nostream/{userId}/{message}")
+    public ResponseEntity<Map<String, String>> noStreamChat(@PathVariable String userId, @PathVariable String message) {
+        try {
+            // Decodifica a mensagem da URL
+            String decodedMessage = java.net.URLDecoder.decode(message, java.nio.charset.StandardCharsets.UTF_8);
+            
+            // Obter resposta completa formatada
+            String aiResponse = llamaService.chatWithAI(userId, decodedMessage);
+            
+            Map<String, String> response = new HashMap<>();
+            response.put("responseText", aiResponse);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
+    }
+}

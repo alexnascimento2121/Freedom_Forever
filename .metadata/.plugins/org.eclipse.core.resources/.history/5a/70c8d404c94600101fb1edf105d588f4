@@ -1,0 +1,443 @@
+package com.br.ff.services;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.io.entity.StringEntity;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import com.br.ff.controller.Request.AnswerRequest;
+import com.br.ff.controller.Request.RecommendationRequest;
+import com.br.ff.controller.Response.ChatMessageResponse;
+import com.br.ff.controller.Response.LlamaRawResponse;
+import com.br.ff.model.Answer;
+import com.br.ff.model.ChatMessage;
+import com.br.ff.model.Question;
+import com.br.ff.model.Recommendation;
+import com.br.ff.model.Users;
+import com.br.ff.repository.AnswerRepository;
+import com.br.ff.repository.ChatMessageRepository;
+import com.br.ff.repository.QuestionRepository;
+import com.br.ff.repository.RecommendationRepository;
+import com.br.ff.repository.UsersRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+@Service
+public class AILLamaRecommendationService {
+    @Autowired
+    private AnswerRepository answerRepository;
+    
+    @Autowired
+    private RecommendationRepository recommendationRepository;
+    
+    @Autowired
+    private QuestionRepository questionRepository;
+    
+    @Autowired
+    private UsersRepository userRepository;
+    
+    @Autowired
+    private ChatMessageRepository chatMessageRepository;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    // Método aprimorado para formatação de respostas da IA Llama
+    public String formatAiResponse(String aiResponse) {
+        if (aiResponse == null || aiResponse.isEmpty()) {
+            return "";
+        }
+
+        try {
+            // Remove prefixos "data:" (usado em SSE - Server-Sent Events)
+            aiResponse = aiResponse.replaceAll("(?m)^data:", "");
+            
+            // Tenta extrair o campo "response" se for um JSON válido
+            if (aiResponse.trim().startsWith("{") && aiResponse.trim().endsWith("}")) {
+                try {
+                    JsonNode jsonNode = mapper.readTree(aiResponse);
+                    if (jsonNode.has("response")) {
+                        aiResponse = jsonNode.get("response").asText();
+                    }
+                } catch (Exception e) {
+                    // Se falhar ao analisar como JSON, continua com o texto original
+                }
+            }
+
+            // Remove padrões de início de resposta JSON se existirem
+            aiResponse = aiResponse.replaceAll("^\\{\"model\":\"llama3\",\"created_at\":\"[^\"]+\",\"response\":\"", "");
+            
+            // Remove possível fechamento de JSON no final
+            aiResponse = aiResponse.replaceAll("\"\\}$", "");
+            
+            // Remove quebras de linha duplicadas
+            aiResponse = aiResponse.replaceAll("\\n\\n", " ");
+            
+            // Remove marcadores numéricos (ex: "1. ", "2. ")
+            aiResponse = aiResponse.replaceAll("\\n\\d+\\.\\s*", " ");
+            
+            // Remove marcadores de lista com tabulação (ex: "\t* ")
+            aiResponse = aiResponse.replaceAll("\\n\\t\\*\\s*", " ");
+            
+            // Substitui quebras de linha simples por espaços
+            aiResponse = aiResponse.replaceAll("\\n", " ");
+            
+            // Remove espaços duplicados
+            aiResponse = aiResponse.replaceAll("\\s+", " ").trim();
+            
+            // Opção: converter para HTML se necessário para o frontend
+            // Descomente a linha abaixo se quiser manter a formatação HTML
+            // aiResponse = convertToHtml(aiResponse);
+            
+            return aiResponse;
+            
+        } catch (Exception e) {
+            // Em caso de erro, retorna o texto original
+            return aiResponse;
+        }
+    }
+    
+    // Método opcional para converter para HTML formatado
+    @SuppressWarnings("unused")
+	private String convertToHtml(String text) {
+        // Converte quebras de linha para <br>
+        String html = text.replace("\n", "<br>");
+        
+        // Detecta e formata listas numeradas
+        Pattern numberedListPattern = Pattern.compile("(^|<br>)(\\d+)\\. (.+?)(?=<br>|$)");
+        html = numberedListPattern.matcher(html).replaceAll("$1<ol start=\"$2\"><li>$3</li></ol>");
+        
+        // Detecta e formata listas com marcadores
+        Pattern bulletListPattern = Pattern.compile("(^|<br>)\\* (.+?)(?=<br>|$)");
+        html = bulletListPattern.matcher(html).replaceAll("$1<ul><li>$2</li></ul>");
+        
+        return html;
+    }
+
+    public Recommendation processAnswersAndGenerateRecommendation(RecommendationRequest request) {
+        Users user = userRepository.findById(request.getUserId())
+                                   .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+
+        // Salvar respostas no banco
+        List<Answer> savedAnswers = new ArrayList<>();
+        for (AnswerRequest dto : request.getAnswers()) {
+            Question question = questionRepository.findById(dto.getQuestionId())
+                                                  .orElseThrow(() -> new RuntimeException("Pergunta não encontrada"));
+            Answer answer = new Answer();
+            answer.setUsers(user);
+            answer.setQuestion(question);
+            answer.setAnswerText(dto.getAnswerText());
+            savedAnswers.add(answerRepository.save(answer));
+        }
+
+        // Formatar respostas para IA
+        String prompt = buildPromptFromAnswers(savedAnswers);
+
+        // Chamar IA via Ollama
+        String aiResponse = callLlamaWithPrompt(prompt);
+        
+        // Formatar a resposta antes de salvar
+        aiResponse = formatAiResponse(aiResponse);
+
+        // Salvar recomendação
+        Recommendation recommendation = new Recommendation();
+        recommendation.setUser(user);
+        recommendation.setRecommendationText(aiResponse);
+
+        return recommendationRepository.save(recommendation);
+    }
+
+    private String buildPromptFromAnswers(List<Answer> answers) {
+        StringBuilder builder = new StringBuilder("Considere as seguintes respostas do usuário sobre vícios e dependências:\n");
+        for (Answer answer : answers) {
+            builder.append("- ")
+                   .append(answer.getQuestion().getQuestionText())
+                   .append(": ")
+                   .append(answer.getAnswerText())
+                   .append("\n");
+        }
+        builder.append("\nCom base nessas informações, forneça uma recomendação terapêutica detalhada.");
+        return builder.toString();
+    }
+
+    private String callLlamaWithPrompt(String prompt) {
+        try {
+            Map<String, Object> payload = Map.of("model", "llama3", "prompt", prompt, "stream", false);
+            String rawResponse = sendPost("http://localhost:11434/api/generate", payload);
+            return formatAiResponse(rawResponse); // Formata a resposta antes de retornar
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Não foi possível gerar a recomendação.";
+        }
+    }
+
+    private String sendPost(String url, Object body) throws IOException {
+        var client = HttpClients.createDefault();
+        var request = new HttpPost(url);
+        var json = mapper.writeValueAsString(body);
+        request.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
+
+        try (var response = client.execute(request)) {
+            int statusCode = response.getCode();
+
+            if (statusCode >= 200 && statusCode < 300) {
+                return new String(response.getEntity().getContent().readAllBytes());
+            } else {
+                String error = new String(response.getEntity().getContent().readAllBytes());
+                throw new IOException("Erro na resposta do Ollama [" + statusCode + "]: " + error);
+            }
+        }
+    }
+
+    // Por id
+    public List<Recommendation> getUserRecommendationsByID(String userId) {
+        Users user = userRepository.findById(userId)
+                                   .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+        return recommendationRepository.findByUser(user);
+    }
+    
+    // Por Username
+    public List<Recommendation> getUserRecommendations(String username) {
+        Users user = userRepository.findByUsername(username);
+        return recommendationRepository.findByUser(user);
+    }
+
+    public String simplePrompt(String prompt) {
+        try {
+            var payload = Map.of("model", "llama3", "prompt", prompt, "stream", true);
+            String rawResponse = sendStreamingPost("http://localhost:11434/api/generate", payload);
+            return formatAiResponse(rawResponse); // Formata a resposta antes de retornar
+        } catch (Exception e) {
+            return e.getMessage();
+        }
+    }
+    
+    private String sendStreamingPost(String url, Object body) throws IOException {
+        var client = HttpClients.createDefault();
+        var request = new HttpPost(url);
+        String json = mapper.writeValueAsString(body);
+        request.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
+
+        StringBuilder result = new StringBuilder();
+
+        try (var response = client.execute(request);
+             var reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent()))) {
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.isEmpty()) {
+                    JsonNode node = mapper.readTree(line);
+                    String content = node.has("response") ? node.get("response").asText() : "";
+                    result.append(content);
+                }
+            }
+        }
+
+        return result.toString();
+    }
+    
+    public String chatWithAI(String userId, String userText) {
+    	System.out.println("ID: "+userId);
+        Users user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+
+        // Recupera as respostas anteriores do usuário (contexto)
+        List<Answer> pastAnswers = answerRepository.findByUsers(user);
+        StringBuilder contextBuilder = new StringBuilder();
+
+        for (Answer ans : pastAnswers) {
+            contextBuilder.append("- ")
+                .append(ans.getQuestion().getQuestionText())
+                .append(": ")
+                .append(ans.getAnswerText())
+                .append("\n");
+        }
+
+        contextBuilder.append("\nÚltima entrada do usuário: ").append(userText);
+        contextBuilder.append("\nResponda de forma útil e motivacional.");
+
+        try {
+            Map<String, Object> payload = Map.of(
+                "model", "llama3",
+                "prompt", contextBuilder.toString(),
+                "stream", false
+            );
+            String rawResponse = sendPost("http://localhost:11434/api/generate", payload);
+            
+            // Salvar mensagem do usuário no histórico
+            ChatMessage userMessage = new ChatMessage();
+            userMessage.setUser(user);
+            userMessage.setRole("user");
+            userMessage.setMessage(userText);
+            userMessage.setTimestamp(LocalDateTime.now());
+            chatMessageRepository.save(userMessage);
+            
+            // Formatar a resposta da IA
+            String formattedResponse = formatAiResponse(rawResponse);
+            
+            // Salvar resposta da IA no histórico
+            ChatMessage aiMessage = new ChatMessage();
+            aiMessage.setUser(user);
+            aiMessage.setRole("assistant");
+            aiMessage.setMessage(formattedResponse);
+            aiMessage.setTimestamp(LocalDateTime.now());
+            chatMessageRepository.save(aiMessage);
+            
+            return formattedResponse;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Erro ao conversar com a IA.";
+        }
+    }
+
+    public String handleInitialAnswerAndStartChat(AnswerRequest request) {
+        Users user = userRepository.findById(request.getUserId())
+                                   .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+
+        Question question = questionRepository.findById(request.getQuestionId())
+                                              .orElseThrow(() -> new RuntimeException("Pergunta não encontrada"));
+
+        // Salvar resposta inicial
+        Answer answer = new Answer();
+        answer.setUsers(user);
+        answer.setQuestion(question);
+        answer.setAnswerText(request.getAnswerText());
+        answerRepository.save(answer);
+
+        // Salvar no histórico (mensagem do usuário)
+        ChatMessage userMessage = new ChatMessage();
+        userMessage.setUser(user);
+        userMessage.setRole("user");
+        userMessage.setMessage(request.getAnswerText());
+        userMessage.setTimestamp(LocalDateTime.now());
+        chatMessageRepository.save(userMessage);
+
+        // Montar prompt para IA
+        String prompt = "O usuário respondeu à seguinte pergunta sobre vícios:\n" +
+                        question.getQuestionText() + "\nResposta: " + request.getAnswerText() +
+                        "\nCom base nisso, inicie um acompanhamento terapêutico com base em IA.";
+
+        // Chamar IA
+        String rawJson = callLlamaWithPrompt(prompt);
+
+        // Desserializar JSON para extrair só o texto da resposta
+        String aiResponse;
+        try {
+            LlamaRawResponse parsed = mapper.readValue(rawJson, LlamaRawResponse.class);
+            aiResponse = parsed.getResponse();
+            // Aplicar formatação avançada
+            aiResponse = formatAiResponse(aiResponse);
+        } catch (Exception e) {
+            // Se falhar ao analisar como JSON, tenta formatar diretamente
+            aiResponse = formatAiResponse(rawJson);
+        }
+
+        // Salvar resposta da IA no histórico
+        ChatMessage aiMessage = new ChatMessage();
+        aiMessage.setUser(user);
+        aiMessage.setRole("IA");
+        aiMessage.setMessage(aiResponse);
+        aiMessage.setTimestamp(LocalDateTime.now());
+        chatMessageRepository.save(aiMessage);
+
+        return aiResponse;
+    }
+    
+    public List<ChatMessageResponse> getChatHistoryByUsername(String username, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by("timestamp").descending());
+
+        Users user = userRepository.findByUsername(username);
+        if (user == null) {
+            throw new RuntimeException("Usuário não encontrado com username: " + username);
+        }    
+
+        Page<ChatMessage> chatPage = chatMessageRepository.findByUserOrderByTimestampDesc(user, pageable);      
+        List<ChatMessage> messages = new ArrayList<>(chatPage.getContent());       
+
+        Collections.reverse(messages);
+        return messages.stream().map(chat -> {
+            ChatMessageResponse dto = new ChatMessageResponse();
+            dto.setId(chat.getId());
+            dto.setRole(chat.getRole());
+            dto.setMessage(chat.getMessage());
+            dto.setTimestamp(chat.getTimestamp());  
+            return dto;
+        }).collect(Collectors.toList());
+    }
+
+    
+    public List<ChatMessageResponse> getChatHistoryByUserId(String userId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by("timestamp").descending());
+
+        Optional<Users> user = userRepository.findById(userId);
+        if (user == null) {
+            throw new RuntimeException("Usuário não encontrado com username: " + userId);
+        }    
+
+        Page<ChatMessage> chatPage = chatMessageRepository.findByUserOrderByTimestampDesc(user, pageable);      
+        List<ChatMessage> messages = new ArrayList<>(chatPage.getContent());       
+
+        Collections.reverse(messages);
+        return messages.stream().map(chat -> {
+            ChatMessageResponse dto = new ChatMessageResponse();
+            dto.setId(chat.getId());
+            dto.setRole(chat.getRole());
+            dto.setMessage(chat.getMessage());
+            dto.setTimestamp(chat.getTimestamp());  
+            return dto;
+        }).collect(Collectors.toList());
+    }
+    
+    public List<String> streamResponse(String userId, String message) {
+        // Salvar mensagem do usuário no histórico
+        Users user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+            
+        ChatMessage userMessage = new ChatMessage();
+        userMessage.setUser(user);
+        userMessage.setRole("user");
+        userMessage.setMessage(message);
+        userMessage.setTimestamp(LocalDateTime.now());
+        chatMessageRepository.save(userMessage);
+        
+        // Obter resposta da IA e formatá-la
+        String resposta = chatWithAI(userId, message);
+        resposta = formatAiResponse(resposta);
+        
+        // Dividir em chunks para streaming
+        List<String> chunks = new ArrayList<>();
+        int chunkSize = 30;
+
+        for (int i = 0; i < resposta.length(); i += chunkSize) {
+            // Retorna os chunks sem o prefixo "data:" - o Spring SSE adiciona automaticamente
+            chunks.add(resposta.substring(i, Math.min(resposta.length(), i + chunkSize)));
+        }
+        
+        // Salvar resposta completa da IA no histórico
+        ChatMessage aiMessage = new ChatMessage();
+        aiMessage.setUser(user);
+        aiMessage.setRole("assistant");
+        aiMessage.setMessage(resposta);
+        aiMessage.setTimestamp(LocalDateTime.now());
+        chatMessageRepository.save(aiMessage);
+
+        return chunks;
+    }
+}

@@ -1,0 +1,73 @@
+package com.br.ff.controller;
+
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.br.ff.model.Answer;
+import com.br.ff.model.Question;
+import com.br.ff.model.Users;
+import com.br.ff.repository.AnswerRepository;
+import com.br.ff.repository.QuestionRepository;
+import com.br.ff.repository.UsersRepository;
+import com.br.ff.services.AnswerService;
+
+
+
+@RestController
+@RequestMapping("/answers")
+public class AnswerController {
+	
+	 @Autowired
+	 private AnswerService answerService;
+	 
+	 @Autowired
+	 private AnswerRepository  answerRepository;
+	 
+	 @Autowired
+	 private QuestionRepository questionRepository;
+	 
+	 @Autowired
+	 private UsersRepository userRepository;
+
+	    @GetMapping("/question/{questionId}")
+	    public ResponseEntity<List<Answer>> getAnswersByQuestion(@PathVariable Long questionId) {
+	        List<Answer> answers = answerService.getAnswersByQuestion(questionId);
+	        return ResponseEntity.ok(answers);
+	    }
+
+	    @GetMapping("/user/{userId}")
+	    public ResponseEntity<List<Answer>> getAnswersByUser(@PathVariable Long userId) {
+	        List<Answer> answers = answerService.getAnswersByUser(userId);
+	        return ResponseEntity.ok(answers);
+	    }
+
+	    public Answer createAnswer(Long questionId, Long userId, String answerText) {
+	        // Verifica se o usuário já respondeu essa pergunta
+	        Optional<Answer> existing = answerRepository.findByUserIdAndQuestionId(userId, questionId);
+	        if (existing.isPresent()) {
+	            throw new RuntimeException("Usuário já respondeu essa pergunta.");
+	        }
+
+	        // Busca os objetos completos de User e Question
+	        Users user = userRepository.findById(userId)
+	                .orElseThrow(() -> new RuntimeException("Usuário não encontrado com ID: " + userId));
+
+	        Question question = questionRepository.findById(questionId)
+	                .orElseThrow(() -> new RuntimeException("Pergunta não encontrada com ID: " + questionId));
+
+	        // Cria a resposta
+	        Answer answer = new Answer();
+	        answer.setUsers(user);
+	        answer.setQuestion(question);
+	        answer.setAnswerText(answerText);
+
+	        return answerRepository.save(answer);
+	    }
+}

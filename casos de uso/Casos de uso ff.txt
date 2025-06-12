@@ -1,0 +1,22 @@
+Casos de uso
+
+cadastro
+
+O usuário se registra na plataforma.
+coloca nome,idade,email,fone e foto;
+e redirecionado para pergunta inicial sobre sua saúde mental e feito uma serie de perguntas e depois analisada pela ia e repassado uma serie de exercicios
+
+psicólogo
+Se cadastra normalmente como usuário, porem coloca o numero de registro e foto;
+redirecionado para dashboard com seus pacientes atendidos
+
+usuário administrador
+se registra na plataforma e tem acesso a dashboard com dados gerais de novos usuários e etc;
+
+
+
+
+
+
+
+ 
